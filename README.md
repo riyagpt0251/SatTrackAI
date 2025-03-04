@@ -41,7 +41,7 @@
 
 1. **Clone the repository** 🛠️  
    ```bash
-   git clone https://github.com/your-repo/sattrack-ai.git
+   git clone (https://github.com/riyagpt0251/SatTrackAI)
    ```
 2. **Install dependencies** 📦  
    ```bash
