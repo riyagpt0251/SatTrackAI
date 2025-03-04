@@ -3,139 +3,164 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SatTrack AI - Satellite Tracking</title>
+    <title>Satellite Tracker</title>
     <!-- Bootstrap CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body {
             background-color: #f8f9fa;
             padding: 20px;
         }
-        .chart-container {
-            max-width: 800px;
-            margin: 20px auto;
-        }
-        .data-table {
+        .map-container {
+            height: 400px;
             margin-top: 20px;
+        }
+        .card {
+            margin-bottom: 20px;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1 class="text-center mb-4">SatTrack AI - Satellite Tracking</h1>
+        <h1 class="text-center mb-4">Satellite Tracker</h1>
 
         <!-- Satellite Selection -->
-        <div class="mb-3">
-            <label for="satelliteSelect" class="form-label">Select Satellite:</label>
-            <select id="satelliteSelect" class="form-select">
-                <option value="ISS (ZARYA)">ISS (ZARYA)</option>
-                <option value="Hubble Space Telescope">Hubble Space Telescope</option>
-                <option value="NOAA 19">NOAA 19</option>
-            </select>
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Select Satellite</h5>
+                <div class="input-group mb-3">
+                    <select id="satelliteSelect" class="form-select">
+                        <option value="">Loading satellites...</option>
+                    </select>
+                    <button class="btn btn-primary" onclick="loadSatelliteData()">Track</button>
+                </div>
+            </div>
         </div>
 
-        <!-- Buttons -->
-        <button class="btn btn-primary" onclick="getSatelliteData()">Track Satellite</button>
-
-        <!-- Chart -->
-        <div class="chart-container">
-            <canvas id="satelliteChart"></canvas>
+        <!-- Current Position -->
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Current Position</h5>
+                <p id="currentPosition">Select a satellite to track its current position.</p>
+            </div>
         </div>
 
-        <!-- Raw Data Table -->
-        <div class="data-table">
-            <h3>Raw Data</h3>
-            <table class="table table-bordered">
-                <thead>
-                    <tr>
-                        <th>Timestamp</th>
-                        <th>Latitude</th>
-                        <th>Longitude</th>
-                    </tr>
-                </thead>
-                <tbody id="dataTableBody">
-                    <!-- Data will be populated here -->
-                </tbody>
-            </table>
+        <!-- Predictions -->
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Predicted Path (Next 3 Hours)</h5>
+                <div id="predictions"></div>
+            </div>
+        </div>
+
+        <!-- Map -->
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Ground Track Map</h5>
+                <div id="map" class="map-container"></div>
+            </div>
+        </div>
+
+        <!-- Visibility Check -->
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Visibility Check</h5>
+                <p id="visibilityStatus">Enter your location to check visibility.</p>
+                <button class="btn btn-secondary" onclick="getUserLocation()">Use My Location</button>
+            </div>
         </div>
     </div>
 
+    <!-- Bootstrap JS and dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Leaflet JS for maps -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Custom JS -->
     <script>
-        let satelliteChart;
+        let map;
+        let satelliteMarkers = [];
 
-        function getSatelliteData() {
+        // Load satellites on page load
+        window.onload = async () => {
+            const response = await fetch('/satellites');
+            const data = await response.json();
+            const select = document.getElementById('satelliteSelect');
+            select.innerHTML = data.satellites.map(sat => `<option value="${sat}">${sat}</option>`).join('');
+        };
+
+        // Load satellite data
+        async function loadSatelliteData() {
             const satelliteName = document.getElementById('satelliteSelect').value;
-            fetch(`/track?name=${encodeURIComponent(satelliteName)}`)
-                .then(response => response.json())
-                .then(data => {
-                    updateChart(data);
-                    updateTable(data);
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                });
+            if (!satelliteName) return;
+
+            // Fetch current position
+            const positionResponse = await fetch(`/track?name=${encodeURIComponent(satelliteName)}`);
+            const positionData = await positionResponse.json();
+            document.getElementById('currentPosition').innerHTML = `
+                Latitude: ${positionData.latitude.toFixed(4)}°, 
+                Longitude: ${positionData.longitude.toFixed(4)}°, 
+                Altitude: ${positionData.altitude.toFixed(2)} km
+            `;
+
+            // Fetch predictions
+            const predictionsResponse = await fetch(`/predict?name=${encodeURIComponent(satelliteName)}`);
+            const predictionsData = await predictionsResponse.json();
+            document.getElementById('predictions').innerHTML = predictionsData.latitudes
+                .map((lat, i) => `
+                    <div>
+                        Time: ${predictionsData.timestamps[i]}, 
+                        Lat: ${lat.toFixed(4)}°, 
+                        Lon: ${predictionsData.longitudes[i].toFixed(4)}°
+                    </div>
+                `).join('');
+
+            // Update map
+            updateMap(predictionsData.latitudes, predictionsData.longitudes);
         }
 
-        function updateChart(data) {
-            const ctx = document.getElementById('satelliteChart').getContext('2d');
-
-            if (satelliteChart) {
-                satelliteChart.destroy(); // Destroy existing chart
+        // Update the map with satellite positions
+        function updateMap(latitudes, longitudes) {
+            if (!map) {
+                map = L.map('map').setView([latitudes[0], longitudes[0]], 3);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '© OpenStreetMap contributors'
+                }).addTo(map);
+            } else {
+                map.setView([latitudes[0], longitudes[0]], 3);
             }
 
-            satelliteChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: data.timestamps,
-                    datasets: [{
-                        label: 'Latitude',
-                        data: data.latitudes,
-                        borderColor: 'rgba(75, 192, 192, 1)',
-                        fill: false
-                    }, {
-                        label: 'Longitude',
-                        data: data.longitudes,
-                        borderColor: 'rgba(153, 102, 255, 1)',
-                        fill: false
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    scales: {
-                        x: {
-                            display: true,
-                            title: {
-                                display: true,
-                                text: 'Time'
-                            }
-                        },
-                        y: {
-                            display: true,
-                            title: {
-                                display: true,
-                                text: 'Degrees'
-                            }
-                        }
-                    }
-                }
+            // Clear old markers
+            satelliteMarkers.forEach(marker => map.removeLayer(marker));
+            satelliteMarkers = [];
+
+            // Add new markers
+            latitudes.forEach((lat, i) => {
+                const marker = L.circleMarker([lat, longitudes[i]], { radius: 5, color: 'blue' }).addTo(map);
+                satelliteMarkers.push(marker);
             });
         }
 
-        function updateTable(data) {
-            const tableBody = document.getElementById('dataTableBody');
-            tableBody.innerHTML = ''; // Clear existing rows
+        // Get user location for visibility check
+        function getUserLocation() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(async (position) => {
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+                    const alt = position.coords.altitude || 0;
 
-            for (let i = 0; i < data.timestamps.length; i++) {
-                const row = `
-                    <tr>
-                        <td>${data.timestamps[i]}</td>
-                        <td>${data.latitudes[i].toFixed(4)}</td>
-                        <td>${data.longitudes[i].toFixed(4)}</td>
-                    </tr>
-                `;
-                tableBody.innerHTML += row;
+                    const satelliteName = document.getElementById('satelliteSelect').value;
+                    const response = await fetch(`/visibility?name=${encodeURIComponent(satelliteName)}&lat=${lat}&lon=${lon}&alt=${alt}`);
+                    const data = await response.json();
+                    document.getElementById('visibilityStatus').innerHTML = `
+                        Visible: ${data.visible ? 'Yes' : 'No'}, 
+                        Altitude: ${data.altitude.toFixed(2)}°, 
+                        Azimuth: ${data.azimuth.toFixed(2)}°, 
+                        Distance: ${data.distance.toFixed(2)} km
+                    `;
+                });
+            } else {
+                alert('Geolocation is not supported by your browser.');
             }
         }
     </script>
